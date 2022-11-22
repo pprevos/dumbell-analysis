@@ -1,0 +1,12 @@
+#+title: Validating Exercise Quality with Body Sensors
+
+This assignment was written in Emacs Org Mode instead of RMarkdown because Emacs is way more awesome than RStudio :)
+
+- =assignment.html=: Output of the analysis
+- =assignment.org=: Org mode source code
+- =dumbell.png=: Sensing setup
+- =importance.png=: Visualisation of the relative importance of predictors
+- =pml.bib=: Bibligraphy
+- =readme.org=: This file
+
+ Read the assignment of [[https://pprevos.github.io/dumbell-analysis/][GitHub Pages]].

@@ -1,0 +1,232 @@
+#+title:        Validating Exercise Quality with Body Sensors
+#+date:         [2022-08-14 Sun 11:43]
+#+filetags:     :hopkins:r:stats:
+#+identifier:   20220814T114318
+#+options:      toc:nil
+#+bibliography: pml.bib
+#+property:     header-args :session *R* :eval yes :exports results
+
+* Introduction
+Using devices such as /Jawbone Up/, /Nike FuelBand/, and /Fitbit/ it is possible to collect a large amount of data about personal activity. These type of devices are part of the quantified self movement --- a group of enthusiasts who regularly take measurements about themselves to improve their health, to find patterns in their behaviour, or simple because they are tech geeks. People regularly quantify /how much/ of a particular activity they do, but they rarely quantify /how well/ they do it. This project uses the data from accelerometers on the belt, forearm, arm, and dumbbell of six participants, shown in figure 1 [cite:@velloso_2013_qual].
+
+#+caption: Sensing setup.
+#+attr_html: :width 400
+[[file:dumbell.png]]
+
+Participants performed one set of ten repetitions of the Unilateral Dumbbell Biceps Curl correctly (Class A) and incorrectly in four ways:
+
+- Throwing the elbows to the front (Class B)
+- Lifting the dumbbell only halfway (Class C)
+- Lowering the dumbbell only halfway (Class D)
+- Throwing the hips to the front (Class E)
+
+The video below demonstrates the correct method to perform unilateral biceps curls.
+
+#+begin_export html
+<center>
+<iframe width="560" height="315" src="https://www.youtube.com/embed/YxtwA7XRK_g" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen>
+
+</iframe>
+<p>Brett Taylor, D B Unilateral Curls.</p>
+</center>
+#+end_export
+
+This report partially reproduces the research in Velloso et al. (2013), who developed a live feedback system to assist people performing curls perform them correctly. This paper predicts the type of biceps curl (A to E).
+
+* Data Preparation
+The data is available from the [[https://archive.ics.uci.edu/ml/datasets/Weight+Lifting+Exercises+monitored+with+Inertial+Measurement+Units][UCI Machine Learning Repository]]. Each IMU has x, y, and z values + euler angles (roll, pitch and yaw). For each time window (1s of data), there are several statistics calculations, like Kurtosis, Variance, etc. The =classe= column contains the dependent variable.
+
+** Load Data
+The data for this assignment is loaded directly from the course website.
+
+#+begin_src R :results none :exports code
+  # Download data
+  library(readr)
+  raw_data <- read_csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+  validate_raw <- read_csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+#+end_src
+
+The training data contains src_R{ncol(raw_data)} {{{results(=160=)}}} variables and src_R{nrow(raw_data)} {{{results(=19622=)}}} observations.
+
+** Pre-Processing
+The pre-processing step involves removing variables that are less likely to contribute to the prediction. Near-zero variance variables have a low proportion of unique values over the sample size. The data also contains a large number of missing values because many of the variables contain periodic descriptive statistics of other variables. Independent variables with more than 95% of missing values are removed from the data set. This omission will not influence the error rate of the prediction model since these are summary statistics that highly correlate with the other data. The first seven variables are meta data that can also be removed.
+
+#+begin_src R :results none
+  # Identift variables with nearly zero variance
+  library(caret)
+  near_zero <- nearZeroVar(raw_data)
+
+  # Identify variables that are almost always NA
+  mostly_na <- sapply(raw_data, function(x) mean(is.na(x))) > 0.95
+
+  # Metadata
+  meta_data <- 1:7
+
+  # Remove non-predictive values
+  non_pred <- -c(near_zero, which(mostly_na), meta_data)
+  
+  clean_data <- raw_data[, non_pred]
+  validate <- validate_raw[, non_pred]
+#+end_src
+
+This feature-reduction step leaves src_R{ncol(clean_data)} {{{results(=53=)}}} variables. Thirteen measurements for each of the four locations (belt, arm, dumbell, forearm) and the independent variable. Acceleration, gyroscope, and magnet were measured in three orthogonal directions. Pitch, roll, yaw and total acceleration have one dimension (Table 1).
+
+#+name: Table 1: Measurement locations and types.
+#+begin_src R :colnames yes :rownames yes :exports both
+  # Summarise predictors
+  names_clean_data <- gsub("total_accel", "total-accel", names(clean_data))
+
+  vars <- strsplit(names_clean_data[-53], "_")
+  measurements <- unlist(lapply(vars, function(x){x[1]}))
+  locations <- unlist(lapply(vars, function(x){x[2]}))
+  table(measurements, locations)
+#+end_src
+
+#+RESULTS: Table 1: Measurement locations and types.
+|             | arm | belt | dumbbell | forearm |
+|-------------+-----+------+----------+---------|
+| accel       |   3 |    3 |        3 |       3 |
+| gyros       |   3 |    3 |        3 |       3 |
+| magnet      |   3 |    3 |        3 |       3 |
+| pitch       |   1 |    1 |        1 |       1 |
+| roll        |   1 |    1 |        1 |       1 |
+| total-accel |   1 |    1 |        1 |       1 |
+| yaw         |   1 |    1 |        1 |       1 |
+
+* Training and Testing Data
+The clean data is partitioned in a training set (70% of the data) and a testing set.
+
+#+begin_src R :results none
+# Training and testing data
+set.seed(1969)
+in_train <- createDataPartition(y = clean_data$classe, p = 0.7, list = FALSE)
+training <- clean_data[in_train, ]
+testing <- clean_data[-in_train, ]
+#+end_src
+
+* Modelling
+A Random Forest model is fitted to the data with three-way cross-validation.
+
+#+begin_src R :results output :exports both
+  # Use three-fold cross-validation to select optimal tuning parameters
+  fit_control <- trainControl(method = "cv", number = 3, verboseIter = FALSE)
+
+  # fit model
+  fit <- train(classe ~ ., data = training, method = "rf",
+               trControl = fit_control, allowParallel = TRUE)
+
+  fit$finalModel
+#+end_src
+
+#+RESULTS:
+#+begin_example
+
+Call:
+ randomForest(x = x, y = y, mtry = min(param$mtry, ncol(x)), allowParallel = TRUE) 
+               Type of random forest: classification
+                     Number of trees: 500
+No. of variables tried at each split: 27
+
+        OOB estimate of  error rate: 0.68%
+Confusion matrix:
+     A    B    C    D    E class.error
+A 3899    6    1    0    0 0.001792115
+B   15 2639    3    1    0 0.007148232
+C    0   17 2373    6    0 0.009599332
+D    0    1   28 2220    3 0.014209591
+E    0    1    5    7 2512 0.005148515
+#+end_example
+
+** Testing the model
+The model is applied to the testing data to determine the Out-of-Sample error.
+
+#+begin_src R :results output :exports both
+# use model to predict classe in validation set (testing)
+predictions <- predict(fit, newdata = testing)
+
+# show confusion matrix to get estimate of out-of-sample error
+confusionMatrix(as.factor(testing$classe), predictions)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1671    2    0    0    1
+         B    4 1133    2    0    0
+         C    0    3 1020    3    0
+         D    0    1    5  958    0
+         E    0    0    5    3 1074
+
+Overall Statistics
+                                          
+               Accuracy : 0.9951          
+                 95% CI : (0.9929, 0.9967)
+    No Information Rate : 0.2846          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9938          
+                                          
+ Mcnemar's Test P-Value : NA              
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.9976   0.9947   0.9884   0.9938   0.9991
+Specificity            0.9993   0.9987   0.9988   0.9988   0.9983
+Pos Pred Value         0.9982   0.9947   0.9942   0.9938   0.9926
+Neg Pred Value         0.9991   0.9987   0.9975   0.9988   0.9998
+Prevalence             0.2846   0.1935   0.1754   0.1638   0.1827
+Detection Rate         0.2839   0.1925   0.1733   0.1628   0.1825
+Detection Prevalence   0.2845   0.1935   0.1743   0.1638   0.1839
+Balanced Accuracy      0.9984   0.9967   0.9936   0.9963   0.9987
+#+end_example
+
+The out of sample accuracy is, with 95% confindence, between 0.993 and 0.997, less than 1 % error.  
+
+The random forest model has a built-in variable importance score that illustrates the influence each predictor has on the outcomes. The image in figure 2 visualises the top twenty variables. This analysis shows that the roll of the belt is the most influential variable.
+
+#+begin_src R :results file graphics :file importance.png
+  plot(varImp(fit), top = 20)
+#+end_src
+#+caption: Top-twenty variable sorted by importance.
+#+RESULTS:
+[[file:importance.png]]
+
+
+* Validating the prediction model
+The prediction model =fit= is applied to the validation data set to test the accuracy of the prediction. The feedback of the quiz shows that all answers are correct.
+
+#+begin_src R :colnames yes
+  data.frame(Case = paste("Case", 1:20),
+             Prediction = predict(fit, newdata = validate))
+#+end_src
+
+#+RESULTS:
+| Case    | Prediction |
+|---------+------------|
+| Case 1  | B          |
+| Case 2  | A          |
+| Case 3  | B          |
+| Case 4  | A          |
+| Case 5  | A          |
+| Case 6  | E          |
+| Case 7  | D          |
+| Case 8  | B          |
+| Case 9  | A          |
+| Case 10 | A          |
+| Case 11 | B          |
+| Case 12 | C          |
+| Case 13 | B          |
+| Case 14 | A          |
+| Case 15 | E          |
+| Case 16 | E          |
+| Case 17 | A          |
+| Case 18 | B          |
+| Case 19 | B          |
+| Case 20 | B          |
+
+* References
+Velloso, Bulling, Gellersen, Ugulino, Fuks (2013) Qualitative Activity Recognition of Weight Lifting Exercises, AH '13: /Proceedings of the 4th Augmented Human International Conference/, Pages 116–123. https://doi.org/10.1145/2459236.2459256
